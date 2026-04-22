@@ -52,37 +52,81 @@ Tôi là Gemma, một mô hình AI được tạo bởi Google DeepMind...
 
 ---
 
-## Phần 2 — Kết Nối OpenClaw Với Ollama
+## Phần 2 — Cài OpenClaw và Kết Nối Với Ollama
 
-**OpenClaw** là AI agent framework mã nguồn mở, chạy cục bộ, kết nối với Ollama làm LLM backend. Hỗ trợ chat, coding agent, và tích hợp với Zalo/Discord/Telegram.
+**OpenClaw** ([openclaw.ai](https://openclaw.ai)) là personal AI assistant mã nguồn mở, tự host, kết nối LLM với các nền tảng chat (WhatsApp, Telegram, Discord, Slack, iMessage...). Chạy hoàn toàn cục bộ, không cần API key.
 
-### Cài Nhanh (One Command)
-
-```powershell
-# Tự động cài OpenClaw + cấu hình dùng gemma4:e4b qua Ollama
-ollama launch openclaw --model gemma4:e4b
-```
-
-### Cài Thủ Công
+### Bước 1: Cài OpenClaw Trên Windows
 
 ```powershell
-# 1. Cài OpenClaw
-openclaw onboard
-# → Chọn "Ollama" từ danh sách provider
-# → Nhập Ollama URL: http://127.0.0.1:11434
+# Cách 1 — WSL2 (khuyến nghị, ổn định nhất)
+wsl --install
+# Sau khi WSL2 xong, mở Ubuntu terminal:
+curl -fsSL https://openclaw.ai/install.sh | bash
 
-# 2. Set model — BẮT BUỘC có prefix "ollama/"
-openclaw models set ollama/gemma4:e4b
+# Cách 2 — PowerShell trực tiếp (nhanh, thử nghiệm)
+iwr -useb https://openclaw.ai/install.ps1 | iex
 ```
 
-> **Quan trọng:** Phải dùng prefix `ollama/gemma4:e4b`, không phải chỉ `gemma4:e4b`.
-> Nếu thiếu prefix, OpenClaw sẽ gọi lên cloud thay vì chạy local.
+### Bước 2: Cấu Hình Ollama Provider
 
-### Kiểm Tra Đang Dùng Local
+Mở file `~/.openclaw/openclaw.json` (hoặc `%USERPROFILE%\.openclaw\openclaw.json` trên Windows):
+
+```json5
+{
+  models: {
+    providers: {
+      ollama: {
+        baseUrl: "http://127.0.0.1:11434",
+        apiKey: "ollama-local",
+        api: "ollama",
+        models: [
+          {
+            id: "gemma4:e4b",
+            name: "gemma4:e4b",
+            input: ["text", "image"],
+            contextWindow: 128000,
+            maxTokens: 8192
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+> **CẢNH BÁO:** URL phải là `http://127.0.0.1:11434` — **KHÔNG** thêm `/v1` vào cuối.
+> Nếu dùng `/v1` (OpenAI-compatible mode), tool calling sẽ bị lỗi và model trả về JSON thô.
+
+### Bước 3: Dùng Biến Môi Trường (Cách Nhanh Hơn)
+
+```powershell
+# Chỉ cần set biến này, OpenClaw tự tìm model từ Ollama local
+$env:OLLAMA_API_KEY = "ollama-local"
+openclaw start
+```
+
+### Bước 4: Gọi Model Với Prefix `ollama/`
+
+```json5
+{
+  agents: {
+    defaults: {
+      model: {
+        primary: "ollama/gemma4:e4b"
+      }
+    }
+  }
+}
+```
+
+> Phải có prefix `ollama/` — nếu chỉ ghi `gemma4:e4b`, OpenClaw sẽ gọi cloud.
+
+### Kiểm Tra
 
 ```powershell
 openclaw config show
-# Dòng "provider: ollama" và "model: ollama/gemma4:e4b" là đúng
+# Phải thấy: provider=ollama, baseUrl=http://127.0.0.1:11434
 ```
 
 ---
