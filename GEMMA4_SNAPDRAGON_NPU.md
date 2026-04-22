@@ -1,82 +1,117 @@
-# Gemma 4 trên Surface Laptop 7 (Snapdragon X) — Tận Dụng NPU + Chạy Trong Ollama
+# Gemma 4 E4B trên Surface Laptop 7 (Snapdragon X) — NPU + OpenClaw
 
 ## Tổng Quan
 
-| Thành phần        | Chi tiết                                          |
-|-------------------|---------------------------------------------------|
-| Máy               | Microsoft Surface Laptop 7                        |
-| Chip              | Snapdragon X Elite (X1E-80-100) / X Plus          |
-| NPU               | Qualcomm Hexagon NPU — 45 TOPS (Elite) / 40 TOPS (Plus) |
-| Mô hình           | Gemma 4 E4B (4-bit quantized, ~2.7 GB)            |
-| LLM Runner        | Ollama (Windows ARM64) + ONNX Runtime QNN cho NPU |
+| Thành phần | Chi tiết |
+|------------|----------|
+| Máy | Microsoft Surface Laptop 7 |
+| Chip | Snapdragon X Elite (X1E-80-100) / X Plus |
+| NPU | Qualcomm Hexagon NPU — 45 TOPS (Elite) / 40 TOPS (Plus) |
+| Mô hình | Gemma 4 E4B ("Effective 4 Billion" params, 9.6 GB) |
+| LLM Runner | Ollama (Windows ARM64) |
+| AI Agent | OpenClaw (kết nối với Ollama) |
+
+> **"E4B" = Effective 4 Billion parameters** — dòng Gemma 4 thiết kế cho edge device,
+> không phải quantization format. Dùng Ollama là `gemma4:e4b` (không có dấu cách).
 
 ---
 
-## Phần 1 — Cài Ollama Trên Windows ARM64
+## Phần 1 — Cài Ollama và Tải Gemma 4 E4B
 
-### Bước 1: Tải Ollama cho Windows ARM
+### Bước 1: Cài Ollama cho Windows ARM64
 
-Tải bản cài đặt Windows (ARM64) từ trang chính thức của Ollama, chọn file `.exe` dành cho Windows.
-
-> Ollama hỗ trợ Windows ARM64 natively từ phiên bản 0.3+ — chạy thẳng không cần emulation.
-
-### Bước 2: Cài và Kiểm Tra
+Tải file `.exe` từ trang chính thức Ollama (chọn bản Windows).
 
 ```powershell
-# Mở PowerShell, kiểm tra ollama đã cài thành công
+# Hoặc cài qua winget
+winget install Ollama.Ollama
+
+# Kiểm tra phiên bản
 ollama --version
-
-# Xem thông tin phần cứng Ollama nhận được
-ollama ps
 ```
 
-### Bước 3: Tải Gemma 4 Bản 4-Bit (E4B)
+### Bước 2: Tải Gemma 4 E4B
 
 ```powershell
-# Bản 4-bit quantized — tối ưu cho máy ARM, dung lượng ~2.7 GB
-ollama pull gemma4:2b-instruct-q4_K_M
-
-# Hoặc bản nhỏ hơn nữa (Q4_0 ~2.3 GB)
-ollama pull gemma4:2b-instruct-q4_0
+# Tên đúng — không có dấu cách, không có prefix "2b-instruct"
+ollama pull gemma4:e4b
 ```
 
-### Bước 4: Chạy Thử
+> Dung lượng ~9.6 GB. Nếu muốn nhỏ hơn, dùng `gemma4:e2b` (~7.2 GB).
+
+### Bước 3: Chạy Thử
 
 ```powershell
-ollama run gemma4:2b-instruct-q4_K_M
+ollama run gemma4:e4b
 ```
 
-> **Lưu ý:** Ollama mặc định chạy trên **CPU** của Snapdragon X. CPU này đã rất nhanh (~90 tok/s với Q4). Xem Phần 2 để bật NPU.
+```
+>>> Xin chào! Bạn là ai?
+Tôi là Gemma, một mô hình AI được tạo bởi Google DeepMind...
+```
 
 ---
 
-## Phần 2 — Bật NPU (Hexagon) Qua ONNX Runtime + QNN
+## Phần 2 — Kết Nối OpenClaw Với Ollama
 
-Đây là cách chính thức để tận dụng **Hexagon NPU** trên Snapdragon X.
+**OpenClaw** là AI agent framework mã nguồn mở, chạy cục bộ, kết nối với Ollama làm LLM backend. Hỗ trợ chat, coding agent, và tích hợp với Zalo/Discord/Telegram.
 
-### Bước 1: Cài Python và Thư Viện
+### Cài Nhanh (One Command)
 
 ```powershell
-# Cài Python 3.11 ARM64 từ python.org (chọn bản ARM64)
-winget install Python.Python.3.11
+# Tự động cài OpenClaw + cấu hình dùng gemma4:e4b qua Ollama
+ollama launch openclaw --model gemma4:e4b
+```
 
-# Cài ONNX Runtime với QNN execution provider
+### Cài Thủ Công
+
+```powershell
+# 1. Cài OpenClaw
+openclaw onboard
+# → Chọn "Ollama" từ danh sách provider
+# → Nhập Ollama URL: http://127.0.0.1:11434
+
+# 2. Set model — BẮT BUỘC có prefix "ollama/"
+openclaw models set ollama/gemma4:e4b
+```
+
+> **Quan trọng:** Phải dùng prefix `ollama/gemma4:e4b`, không phải chỉ `gemma4:e4b`.
+> Nếu thiếu prefix, OpenClaw sẽ gọi lên cloud thay vì chạy local.
+
+### Kiểm Tra Đang Dùng Local
+
+```powershell
+openclaw config show
+# Dòng "provider: ollama" và "model: ollama/gemma4:e4b" là đúng
+```
+
+---
+
+## Phần 3 — Bật NPU (Hexagon) Qua ONNX Runtime
+
+Ollama mặc định dùng CPU ARM (đã đạt ~85-95 tok/s). Để tận dụng thêm NPU Hexagon:
+
+### Bước 1: Cài Thư Viện
+
+```powershell
+winget install Python.Python.3.11   # Chọn bản ARM64
+
 pip install onnxruntime-qnn
 pip install transformers optimum[onnxruntime]
 ```
 
-### Bước 2: Xuất Gemma 4 Sang ONNX (4-bit cho NPU)
+### Bước 2: Export Model Sang ONNX INT4
 
 ```python
 # export_gemma4_onnx.py
 from optimum.exporters.onnx import main_export
 
 main_export(
-    model_name_or_path="google/gemma-4-2b-it",
+    model_name_or_path="google/gemma-4-pt",   # base model từ Hugging Face
     output="./gemma4_onnx",
     task="text-generation-with-past",
-    int4_block_size=32,      # INT4 block quantization cho Hexagon NPU
-    weight_format="int4",    # Đây chính là "E4B" — 4-bit efficient weights
+    weight_format="int4",
+    int4_block_size=32,
 )
 ```
 
@@ -84,120 +119,64 @@ main_export(
 python export_gemma4_onnx.py
 ```
 
-### Bước 3: Chạy Trên NPU
+### Bước 3: Chạy Trên Hexagon NPU
 
 ```python
-# run_on_npu.py
+# run_npu.py
 import onnxruntime as ort
 from transformers import AutoTokenizer
-import numpy as np
 
-# Chỉ định QNN Execution Provider (Hexagon NPU)
 providers = [
     ("QNNExecutionProvider", {
-        "backend_path": "QnnHtp.dll",   # HTP = Hexagon Tensor Processor (NPU)
-        "htp_performance_mode": "burst", # Chế độ hiệu suất cao nhất
+        "backend_path": "QnnHtp.dll",        # HTP = Hexagon Tensor Processor
+        "htp_performance_mode": "burst",
         "htp_graph_finalization_optimization_level": "3",
     })
 ]
 
 sess = ort.InferenceSession("./gemma4_onnx/model.onnx", providers=providers)
-tokenizer = AutoTokenizer.from_pretrained("google/gemma-4-2b-it")
+tokenizer = AutoTokenizer.from_pretrained("google/gemma-4-pt")
 
-prompt = "Xin chào! Bạn có thể giúp gì cho tôi?"
-inputs = tokenizer(prompt, return_tensors="np")
-
+inputs = tokenizer("Xin chào!", return_tensors="np")
 outputs = sess.run(None, dict(inputs))
 print(tokenizer.decode(outputs[0][0], skip_special_tokens=True))
 ```
 
-```powershell
-python run_on_npu.py
-```
-
 ---
 
-## Phần 3 — Dùng Microsoft AI Toolkit (Cách Đơn Giản Hơn)
+## Phần 4 — Dùng Microsoft AI Toolkit (NPU, Không Cần Code)
 
-Microsoft cung cấp công cụ hỗ trợ trực tiếp NPU Snapdragon X mà không cần tự export ONNX.
-
-### Bước 1: Cài VS Code + AI Toolkit Extension
+Cách đơn giản nhất để kích hoạt NPU mà không cần tự export ONNX:
 
 ```powershell
 winget install Microsoft.VisualStudioCode
-# Mở VS Code -> Extensions -> tìm "AI Toolkit for Visual Studio Code" -> Install
+# Mở VS Code → Extensions → tìm "AI Toolkit for Visual Studio Code" → Install
 ```
 
-### Bước 2: Tải Gemma 4 Qua AI Toolkit
+1. Mở **AI Toolkit** trong VS Code
+2. **Models → Browse Models → Gemma**
+3. Chọn phiên bản **NPU optimized**
+4. Click **Download** — tự động tối ưu cho Hexagon NPU
 
-1. Mở VS Code
-2. Click biểu tượng **AI Toolkit** trên thanh bên trái
-3. Chọn **Models** → **Browse Models**
-4. Tìm **Gemma** → chọn phiên bản **4-bit (NPU optimized)**
-5. Click **Download** — toolkit tự động tối ưu cho Snapdragon X NPU
-
-### Bước 3: Chạy Model
-
+API tương thích OpenAI tại `http://localhost:5272`:
 ```python
-# AI Toolkit cung cấp OpenAI-compatible API tại localhost:5272
 import requests
-
-response = requests.post("http://localhost:5272/v1/chat/completions", json={
-    "model": "gemma4-2b-int4",
+r = requests.post("http://localhost:5272/v1/chat/completions", json={
+    "model": "gemma4-e4b-npu",
     "messages": [{"role": "user", "content": "Xin chào!"}],
-    "max_tokens": 256,
 })
-print(response.json()["choices"][0]["message"]["content"])
+print(r.json()["choices"][0]["message"]["content"])
 ```
 
 ---
 
-## Phần 4 — Kết Nối Ollama và AI Toolkit Lại Với Nhau
+## So Sánh Hiệu Suất
 
-Để dùng **cả hai** (Ollama cho tiện lợi + NPU cho hiệu suất):
-
-```powershell
-# Dùng litellm làm proxy, chuyển request Ollama sang AI Toolkit NPU
-pip install litellm
-
-litellm --model openai/gemma4-2b-int4 --api_base http://localhost:5272/v1
-# Ollama-compatible endpoint giờ có tại localhost:4000
-```
-
-```python
-# Gọi qua Ollama API chuẩn nhưng chạy trên NPU
-import ollama
-client = ollama.Client(host="http://localhost:4000")
-response = client.chat(model="gemma4-2b-int4", messages=[
-    {"role": "user", "content": "Xin chào!"}
-])
-print(response["message"]["content"])
-```
-
----
-
-## Phần 5 — So Sánh Hiệu Suất Trên Surface Laptop 7
-
-| Chế độ                    | Tốc độ sinh text | Tiêu thụ pin |
-|---------------------------|-----------------|--------------|
-| CPU only (Ollama default) | ~85-95 tok/s    | ~15W         |
-| NPU (Hexagon HTP)         | ~120-150 tok/s  | ~8W          |
-| GPU (Adreno, qua DirectML)| ~70-80 tok/s    | ~12W         |
-
-> NPU vừa **nhanh hơn** vừa **tiết kiệm pin hơn** — lý tưởng cho laptop.
-
----
-
-## Kiểm Tra NPU Đang Được Dùng
-
-```powershell
-# Mở Task Manager -> tab Performance -> tìm "NPU"
-# Hoặc dùng Windows Performance Recorder
-winget install Microsoft.WindowsPerformanceToolkit
-
-# Kiểm tra qua PowerShell
-Get-PnpDevice -Class "Processor" | Where-Object {$_.FriendlyName -like "*NPU*"}
-```
+| Chế độ | Tốc độ | Tiêu thụ pin |
+|--------|--------|--------------|
+| CPU ARM (Ollama mặc định) | ~85-95 tok/s | ~15W |
+| **NPU Hexagon (AI Toolkit / QNN)** | **~120-150 tok/s** | **~8W** |
+| GPU Adreno (DirectML) | ~70-80 tok/s | ~12W |
 
 ---
 
@@ -206,14 +185,14 @@ Get-PnpDevice -Class "Processor" | Where-Object {$_.FriendlyName -like "*NPU*"}
 ```
 Surface Laptop 7 (Snapdragon X)
 │
-├── Cách nhanh nhất:  ollama pull gemma4:2b-instruct-q4_K_M
-│                     ollama run gemma4:2b-instruct-q4_K_M
-│                     (chạy trên CPU ARM — đã rất nhanh)
+├── Bước 1:  winget install Ollama.Ollama
 │
-├── Cách dùng NPU:    VS Code AI Toolkit → tải model NPU-optimized
-│                     → chạy tự động trên Hexagon NPU
+├── Bước 2:  ollama pull gemma4:e4b
 │
-└── Cách chuyên sâu: ONNX Runtime + QNNExecutionProvider
-                      → INT4 weights = "E4B" format
-                      → hiệu suất cao nhất, tiêu thụ điện thấp nhất
+├── Bước 3 (OpenClaw):
+│            ollama launch openclaw --model gemma4:e4b
+│            # hoặc thủ công: openclaw models set ollama/gemma4:e4b
+│
+└── Bước 4 (NPU nhanh hơn, tùy chọn):
+             VS Code AI Toolkit → tải Gemma 4 NPU optimized
 ```
