@@ -1,9 +1,10 @@
 ﻿# ================================================================
 # tao_bke_ph_VBA.ps1  -  Phien ban VBA toan phan
 # Phan menhgia + Doc so: tat ca bang VBA, khong co cong thuc o
-# Chay: PowerShell -ExecutionPolicy Bypass -File tao_bke_ph_VBA.ps1
+# Chay: Set-ExecutionPolicy Bypass -Scope Process -Force
+#        & "duong-dan-day-du\tao_bke_ph_VBA.ps1"
 # ================================================================
-# YEU CAU:
+# YEU CAU TRUOC KHI CHAY:
 #   Excel -> File -> Options -> Trust Center -> Trust Center Settings
 #   -> Macro Settings -> tick "Trust access to the VBA project object model"
 # ================================================================
@@ -20,36 +21,32 @@ try {
     $src = [System.IO.Path]::GetFullPath($SourceFile)
     $dst = [System.IO.Path]::GetFullPath($OutputFile)
 
-    if (-not (Test-Path $src)) { throw "Khong tim thay: $src" }
+    if (-not (Test-Path $src)) { throw "Khong tim thay file nguon: $src" }
 
     Write-Host ">> Khoi dong Excel..." -ForegroundColor Cyan
     $excel = New-Object -ComObject Excel.Application
-    $excel.Visible        = $false
-    $excel.DisplayAlerts  = $false
+    $excel.Visible       = $false
+    $excel.DisplayAlerts = $false
 
     Write-Host ">> Mo: $src" -ForegroundColor Cyan
     $wb = $excel.Workbooks.Open($src)
     $ws = $wb.Worksheets.Item(1)
 
-    # --- Xoa tat ca cong thuc cu ---
     Write-Host ">> Xoa cong thuc cu..." -ForegroundColor Yellow
     $ws.Range("C3:D11").ClearContents()
     $ws.Range("C12,D12,H3,I3").ClearContents()
     $ws.Range("I2").ClearContents()
 
-    # ----------------------------------------------------------------
-    # Module chuan: PhanMenhGia + DocSo + DocNhom
-    # ----------------------------------------------------------------
+    # ---- Standard module: PhanMenhGia + DocSo + DocNhom ----
     Write-Host ">> Them standard module VBA..." -ForegroundColor Yellow
-
-    $vbMod = $wb.VBProject.VBComponents.Add(1)   # vbext_ct_StdModule
+    $vbMod = $wb.VBProject.VBComponents.Add(1)
     $vbMod.Name = "AgrisModule"
 
-    $vbaStd = @''
-'' =============================================================
-'' PhanMenhGia: phan so tien thanh cac menhgia (VBA, khong cong thuc)
-'' Trigger: Worksheet_Change khi I2, F3, F4 thay doi
-'' =============================================================
+    $vbaStd = @'
+' =================================================================
+' PhanMenhGia: Phan so tien thanh cac menhgia (chi dung VBA, khong cong thuc)
+' Trigger: Worksheet_Change khi o I2, F3 hoac F4 thay doi
+' =================================================================
 Sub PhanMenhGia(ws As Worksheet)
     Dim tongTien As Double
     tongTien = 0
@@ -57,7 +54,7 @@ Sub PhanMenhGia(ws As Worksheet)
         tongTien = CDbl(ws.Range("I2").Value)
     End If
 
-    '' Doc menhgia tu cot B (B3:B11)
+    ' Doc menhgia tu cot B (B3:B11)
     Dim MG(1 To 9) As Long
     Dim i As Integer
     For i = 1 To 9
@@ -70,7 +67,7 @@ Sub PhanMenhGia(ws As Worksheet)
     Dim conLai As Double
     conLai = tongTien
 
-    '' 500k: kiem tra override F3
+    ' 500k: kiem tra override tai F3
     If ws.Range("F3").Value <> "" And IsNumeric(ws.Range("F3").Value) Then
         soTo(1) = CLng(ws.Range("F3").Value)
     ElseIf MG(1) > 0 Then
@@ -78,7 +75,7 @@ Sub PhanMenhGia(ws As Worksheet)
     End If
     conLai = conLai - CDbl(soTo(1)) * MG(1)
 
-    '' 200k: kiem tra override F4
+    ' 200k: kiem tra override tai F4
     If ws.Range("F4").Value <> "" And IsNumeric(ws.Range("F4").Value) Then
         soTo(2) = CLng(ws.Range("F4").Value)
     ElseIf MG(2) > 0 Then
@@ -86,7 +83,7 @@ Sub PhanMenhGia(ws As Worksheet)
     End If
     conLai = conLai - CDbl(soTo(2)) * MG(2)
 
-    '' 100k xuong 1k: tu dong tinh
+    ' 100k xuong 1k: tu dong tinh
     For i = 3 To 9
         If MG(i) > 0 And conLai >= MG(i) Then
             soTo(i) = CLng(Int(conLai / MG(i)))
@@ -96,14 +93,14 @@ Sub PhanMenhGia(ws As Worksheet)
         conLai = conLai - CDbl(soTo(i)) * MG(i)
     Next i
 
-    '' Ghi ket qua (ScreenUpdating tat de nhanh)
+    ' Ghi ket qua
     Application.ScreenUpdating = False
-
     Dim tongThanhTien As Double: tongThanhTien = 0
     Dim tongSoTo As Long:       tongSoTo = 0
+    Dim tt As Long
 
     For i = 1 To 9
-        Dim tt As Long: tt = soTo(i) * MG(i)
+        tt = soTo(i) * MG(i)
         ws.Cells(i + 2, 3).Value = IIf(soTo(i) > 0, soTo(i), 0)
         ws.Cells(i + 2, 4).Value = IIf(tt > 0, tt, 0)
         tongSoTo      = tongSoTo + soTo(i)
@@ -113,9 +110,9 @@ Sub PhanMenhGia(ws As Worksheet)
     ws.Range("C12").Value = tongSoTo
     ws.Range("D12").Value = tongThanhTien
 
-    '' Trang thai: OK / THIEU / THUA
+    ' Trang thai: OK / THIEU / THUA
     Dim chenh As Double: chenh = tongTien - tongThanhTien
-    Dim D As String: D = ChrW(273)   '' d-stroke
+    Dim D As String: D = ChrW(273)
 
     If tongTien = 0 Then
         ws.Range("I3").Value = ""
@@ -130,14 +127,13 @@ Sub PhanMenhGia(ws As Worksheet)
         ws.Range("I3").Value = "TH" & ChrW(7914) & "A " & Format(Abs(chenh), "#,##0") & D & ChrW(7891) & "ng"
         ws.Range("H3").Value = "TH" & ChrW(7914) & "A"
     End If
-
     Application.ScreenUpdating = True
 End Sub
 
-'' =============================================================
-'' DocSo: chuyen so thanh chu tieng Viet (dung ChrW Unicode)
-'' Vi du: DocSo(2565000) -> "Hai trieu nam tram sau muoi lam nghin dong chan"
-'' =============================================================
+' =================================================================
+' DocSo: Chuyen so thanh chu tieng Viet (dung ChrW Unicode)
+' Vi du: DocSo(2565000) = "Hai trieu nam tram sau muoi lam nghin dong chan"
+' =================================================================
 Function DocSo(so As Double) As String
     Dim soD As Double: soD = Int(Abs(so))
     Dim D As String:   D   = ChrW(273)
@@ -169,9 +165,7 @@ Function DocSo(so As Double) As String
     result = Trim(result)
     If Len(result) = 0 Then result = "kh" & o244 & "ng"
     result = UCase(Left(result, 1)) & Mid(result, 2)
-
-    Dim sDC As String: sDC = " " & D & ChrW(7891) & "ng ch" & ChrW(7851) & "n"
-    DocSo = result & sDC
+    DocSo = result & " " & D & ChrW(7891) & "ng ch" & ChrW(7851) & "n"
 End Function
 
 Private Function DocNhom(n As Long) As String
@@ -181,7 +175,7 @@ Private Function DocNhom(n As Long) As String
     donVi = CInt(n Mod 10)
 
     Dim chu(9) As String
-    chu(0) = "": chu(1) = "m" & ChrW(7897) & "t": chu(2) = "hai": chu(3) = "ba"
+    chu(0) = "":   chu(1) = "m" & ChrW(7897) & "t": chu(2) = "hai": chu(3) = "ba"
     chu(4) = "b" & ChrW(7889) & "n": chu(5) = "n" & ChrW(259) & "m"
     chu(6) = "s" & ChrW(225) & "u":  chu(7) = "b" & ChrW(7843) & "y"
     chu(8) = "t" & ChrW(225) & "m":  chu(9) = "ch" & ChrW(237) & "n"
@@ -224,22 +218,18 @@ Private Function DocNhom(n As Long) As String
 
     DocNhom = Trim(r)
 End Function
-''@
+'@
 
     $vbMod.CodeModule.AddFromString($vbaStd)
     Write-Host "   OK: Standard module da them!" -ForegroundColor Green
 
-    # ----------------------------------------------------------------
-    # Worksheet module: Worksheet_Change event
-    # ----------------------------------------------------------------
+    # ---- Worksheet Change event ----
     Write-Host ">> Them Worksheet_Change event..." -ForegroundColor Yellow
+    $wsVBComp = $wb.VBProject.VBComponents.Item($ws.CodeName)
 
-    $wsCodeName = $ws.CodeName   # e.g. "Sheet1"
-    $wsVBComp   = $wb.VBProject.VBComponents.Item($wsCodeName)
-
-    $vbaWS = @''
+    $vbaWS = @'
 Private Sub Worksheet_Change(ByVal Target As Range)
-    '' Phan menhgia khi I2 thay doi; cho phep override F3(500k), F4(200k)
+    ' Phan menhgia khi I2, F3 hoac F4 thay doi
     If Not Intersect(Target, Me.Range("I2,F3,F4")) Is Nothing Then
         On Error GoTo ErrHandler
         Application.EnableEvents = False
@@ -251,63 +241,52 @@ ErrHandler:
         If Err.Number <> 0 Then MsgBox "Loi VBA: " & Err.Description, vbExclamation
     End If
 End Sub
-''@
+'@
 
     $wsVBComp.CodeModule.AddFromString($vbaWS)
-    Write-Host "   OK: Worksheet_Change event da them!" -ForegroundColor Green
+    Write-Host "   OK: Worksheet_Change da them!" -ForegroundColor Green
 
-    # ----------------------------------------------------------------
-    # O hien thi so bang chu: B14 merged, dung ham DocSo
-    # ----------------------------------------------------------------
+    # ---- O doc so bang chu: B14 merged, dung ham DocSo ----
     Write-Host ">> Them o doc so bang chu (B14)..." -ForegroundColor Yellow
-
     $ws.Range("B14:I14").Merge() | Out-Null
-    $ws.Range("B14").Formula              = "=DocSo(I2)"
-    $ws.Range("B14").HorizontalAlignment  = -4108    # xlCenter
-    $ws.Range("B14").Font.Italic          = $true
-    $ws.Range("B14").Font.Bold            = $false
-    $ws.Range("B14").Font.Size            = 11
-
+    $ws.Range("B14").Formula             = "=DocSo(I2)"
+    $ws.Range("B14").HorizontalAlignment = -4108
+    $ws.Range("B14").Font.Italic         = $true
+    $ws.Range("B14").Font.Size           = 11
     Write-Host "   OK!" -ForegroundColor Green
 
-    # ----------------------------------------------------------------
-    # Print area: chi in trang 1, vua A4
-    # ----------------------------------------------------------------
-    Write-Host ">> Cai dat print area A1:I16, fit 1 trang A4..." -ForegroundColor Yellow
-
-    $ws.PageSetup.PrintArea           = "A1:I16"
-    $ws.PageSetup.Zoom                = $false
-    $ws.PageSetup.FitToPagesWide      = 1
-    $ws.PageSetup.FitToPagesTall      = 1
-    $ws.PageSetup.CenterHorizontally  = $true
-    $ws.PageSetup.PaperSize           = 9            # xlPaperA4
-
+    # ---- Print area: chi in trang 1, vua A4 ----
+    Write-Host ">> Cai dat print area A1:I16..." -ForegroundColor Yellow
+    $ws.PageSetup.PrintArea          = "A1:I16"
+    $ws.PageSetup.Zoom               = $false
+    $ws.PageSetup.FitToPagesWide     = 1
+    $ws.PageSetup.FitToPagesTall     = 1
+    $ws.PageSetup.CenterHorizontally = $true
+    $ws.PageSetup.PaperSize          = 9
     Write-Host "   OK!" -ForegroundColor Green
 
-    # ----------------------------------------------------------------
-    # Luu as xlsm
-    # ----------------------------------------------------------------
+    # ---- Luu as xlsm ----
     Write-Host ">> Luu: $dst" -ForegroundColor Yellow
-    $wb.SaveAs($dst, 52)   # 52 = xlOpenXMLWorkbookMacroEnabled
+    $wb.SaveAs($dst, 52)
     $wb.Close($false)
 
-    Write-Host "" 
+    Write-Host ""
     Write-Host "================================================" -ForegroundColor Green
-    Write-Host "  HOAN THANH: $dst"                               -ForegroundColor Green
+    Write-Host "  HOAN THANH: $dst" -ForegroundColor Green
     Write-Host "================================================" -ForegroundColor Green
-    Write-Host "  Nhap so tien vao I2 -> phan menhgia tu dong"    -ForegroundColor White
-    Write-Host "  F3: so to 500k (de trong = tu dong)"            -ForegroundColor White
-    Write-Host "  F4: so to 200k (de trong = tu dong)"            -ForegroundColor White
-    Write-Host "  B14: so tien bang chu tieng Viet (VBA)"         -ForegroundColor White
-    Write-Host "  In Ctrl+P -> chi ra trang 1 (A1:I16)"          -ForegroundColor White
+    Write-Host "  - Nhap so tien vao I2 -> phan menhgia tu dong" -ForegroundColor White
+    Write-Host "  - F3: nhap tay so to 500k (de trong = tu dong)" -ForegroundColor White
+    Write-Host "  - F4: nhap tay so to 200k (de trong = tu dong)" -ForegroundColor White
+    Write-Host "  - B14: so tien bang chu (ham VBA DocSo)" -ForegroundColor White
+    Write-Host "  - In Ctrl+P chi ra trang 1 (A1:I16, vua A4)" -ForegroundColor White
     Write-Host ""
 }
 catch {
-    Write-Host "\n=== LOI === $_" -ForegroundColor Red
-    if ($_ -match "0x80048240|VBProject|access") {
-        Write-Host "=> Bat quyen VBA: Excel -> File -> Options -> Trust Center ->" -ForegroundColor Yellow
-        Write-Host "   Trust Center Settings -> Macro Settings ->" -ForegroundColor Yellow
-        Write-Host "   tick 'Trust access to the VBA project object model'" -ForegroundColor Yellow
+    Write-Host "`n=== LOI === $_" -ForegroundColor Red
+    if ("$_" -match "80048240|VBProject|access") {
+        Write-Host "=> Can bat quyen VBA:" -ForegroundColor Yellow
+        Write-Host "   Excel -> File -> Options -> Trust Center -> Trust Center Settings" -ForegroundColor Yellow
+        Write-Host "   -> Macro Settings -> tick 'Trust access to the VBA project object model'" -ForegroundColor Yellow
     }
     exit 1
 }
@@ -315,6 +294,7 @@ finally {
     if ($null -ne $excel) {
         try { $excel.Quit() } catch {}
         [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
-        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
     }
 }
