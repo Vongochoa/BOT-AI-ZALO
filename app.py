@@ -5,7 +5,8 @@ Agris Zalo Relay Gateway — Tuân thủ chuẩn tài liệu chính thức: http
 Kiến trúc Cách B:
 - Render KHÔNG chạy AI (không cần GEMINI_API_KEY trên Render).
 - Render nhận tin từ Zalo (Webhook) -> Lưu vào hàng đợi.
-- Agris trên máy tính kéo tin về -> Bot Leader phân tích & điều phối đa phòng ban -> Gửi câu trả lời lên Render -> Render bắn về Zalo qua bot-api.zapps.me.
+- Bắn ngay trạng thái typing ("đang soạn tin nhắn...") về Zalo.
+- Agris trên máy tính kéo tin về -> Bot Leader phân tích & điều phối -> Bắn lời giải về Zalo.
 """
 import os
 import time
@@ -99,6 +100,13 @@ def webhook():
         sender_name = sender_from.get("display_name") or sender_from.get("first_name") or sender_from.get("username") or ""
 
     if chat_id and text:
+        # BẮN NGAY TRẠNG THÁI "ĐANG SOẠN TIN NHẮN..." (TYPING) VỀ ZALO
+        if BOT_TOKEN:
+            try:
+                requests.post(f"{ZALO_BOT_API_BASE}/bot{BOT_TOKEN}/sendChatAction", json={"chat_id": chat_id, "action": "typing"}, timeout=4)
+            except Exception:
+                pass
+
         incoming_queue.append({
             "id": f"{chat_id}_{int(time.time()*1000)}",
             "chat_id": str(chat_id),
@@ -118,6 +126,27 @@ def get_incoming():
     msgs = list(incoming_queue)
     incoming_queue.clear()
     return jsonify({"status": "ok", "messages": msgs})
+
+@app.route("/api/send_action", methods=["POST"])
+def send_action():
+    """Bot Leader Agris gửi trạng thái đang soạn tin (typing) về Zalo"""
+    payload = request.get_json(force=True) or {}
+    chat_id = payload.get("chat_id")
+    action = payload.get("action", "typing")
+
+    if not chat_id:
+        return jsonify({"status": "error", "message": "Thiếu chat_id"}), 400
+
+    if not BOT_TOKEN:
+        return jsonify({"status": "error", "message": "Chưa có BOT_TOKEN"}), 500
+
+    url = f"{ZALO_BOT_API_BASE}/bot{BOT_TOKEN}/sendChatAction"
+    try:
+        r = requests.post(url, json={"chat_id": chat_id, "action": action}, timeout=8)
+        res_data = r.json() if r.headers.get("content-type") == "application/json" else r.text
+        return jsonify({"status": "ok", "zalo_response": res_data})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/api/send_reply", methods=["POST"])
 def send_reply():
