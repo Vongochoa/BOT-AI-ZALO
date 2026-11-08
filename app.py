@@ -1,5 +1,14 @@
 # app.py
+# -*- coding: utf-8 -*-
+"""
+Agris Zalo Relay Gateway — Tuân thủ chuẩn tài liệu chính thức: https://bot.zapps.me/docs/
+Kiến trúc Cách B:
+- Render KHÔNG chạy AI (không cần GEMINI_API_KEY trên Render).
+- Render nhận tin từ Zalo (Webhook) -> Lưu vào hàng đợi.
+- Agris trên máy tính kéo tin về -> Bot Leader phân tích & điều phối đa phòng ban -> Gửi câu trả lời lên Render -> Render bắn về Zalo qua bot-api.zapps.me.
+"""
 import os
+import time
 import requests
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
@@ -8,114 +17,125 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# ENV vars (Cấu hình trên Render Dashboard)
-ZALO_ACCESS_TOKEN = os.getenv("ZALO_ACCESS_TOKEN", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_verify_token")
+# BOT TOKEN chính thức từ Zalo Bot Platform (https://bot.zapps.me)
+BOT_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("ZALO_BOT_TOKEN") or ""
 
-# Zalo API endpoint for sending customer service messages
-ZALO_SEND_URL = "https://openapi.zalo.me/v3.0/oa/message/cs"
+# Endpoint chuẩn theo tài liệu https://bot.zapps.me/docs/
+ZALO_BOT_API_BASE = "https://bot-api.zapps.me"
 
-def generate_ai_response(user_text):
-    """Tạo câu trả lời thông minh bằng Google Gemini (Miễn phí & Siêu nhanh) hoặc OpenAI."""
-    system_prompt = (
-        "Bạn là Trợ lý Tín dụng & Dịch vụ Khách hàng thông minh của Agribank. "
-        "Hãy phản hồi ngắn gọn, thân thiện, lịch sự, xưng hô phù hợp và chuẩn mực nghiệp vụ ngân hàng bằng tiếng Việt."
-    )
-    
-    # 1. Ưu tiên Google Gemini (Gemini 2.5 Flash / 1.5 Flash)
-    if GEMINI_API_KEY:
-        for model in ["gemini-2.5-flash", "gemini-1.5-flash"]:
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-                payload = {
-                    "contents": [{
-                        "role": "user",
-                        "parts": [{"text": f"{system_prompt}\n\nKhách hàng nhắn: {user_text}"}]
-                    }]
-                }
-                res = requests.post(url, json=payload, timeout=12)
-                if res.status_code == 200:
-                    data = res.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            return parts[0].get("text", "").strip()
-            except Exception as ex:
-                print(f"Lỗi gọi Gemini {model}:", ex)
-
-    # 2. Fallback OpenAI nếu có cấu hình
-    if OPENAI_API_KEY:
-        try:
-            import openai
-            openai.api_key = OPENAI_API_KEY
-            resp = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Khách hàng: {user_text}"}
-                ],
-                max_tokens=400,
-                temperature=0.3,
-            )
-            return resp["choices"][0]["message"]["content"].strip()
-        except Exception as ex:
-            print("Lỗi gọi OpenAI:", ex)
-
-    return "Dạ Agribank xin chào Quý khách! Hệ thống đã ghi nhận tin nhắn và cán bộ tín dụng phụ trách sẽ liên hệ lại với Quý khách ngay nhé ạ."
+# Hàng đợi tin nhắn chờ Bot Leader Agris xử lý
+incoming_queue = []
+MAX_QUEUE = 300
 
 @app.route("/")
-def index():
-    return "Zalo-Agent is running with Google Gemini & Agribank Core!"
+def home():
+    token_status = "✅ Đã cấu hình BOT_TOKEN" if BOT_TOKEN else "⚠️ Chưa có BOT_TOKEN (Hãy thêm trên Render Environment)"
+    return (
+        "<div style='font-family: Arial, sans-serif; padding: 30px; line-height: 1.6;'>"
+        "<h2>🚀 Agris Zalo Relay Gateway (Chuẩn bot.zapps.me - Cách B)</h2>"
+        f"<p><b>Trạng thái:</b> Đang chạy online 24/7</p>"
+        f"<p><b>Zalo Bot Token:</b> {token_status}</p>"
+        f"<p><b>Tin nhắn chờ Bot Leader Agris xử lý:</b> {len(incoming_queue)}</p>"
+        "<hr style='border: 0; border-top: 1px solid #ddd; margin: 20px 0;'>"
+        "<p>👉 <b>Kích hoạt Webhook Zalo:</b> Truy cập <a href='/set_webhook'>/set_webhook</a></p>"
+        "<p>👉 <b>Kiểm tra thông tin Bot Zalo:</b> Truy cập <a href='/get_me'>/get_me</a></p>"
+        "</div>"
+    )
 
-@app.route("/webhook", methods=["GET"])
-def verify():
-    token = request.args.get("hub.verify_token") or request.args.get("verify_token")
-    challenge = request.args.get("hub.challenge") or request.args.get("challenge")
-    if token and token == VERIFY_TOKEN:
-        return challenge or "ok"
-    return "invalid verify token", 403
+@app.route("/get_me", methods=["GET"])
+def get_me():
+    """Kiểm tra thông tin Bot trực tiếp từ Zalo Server: https://bot-api.zapps.me/bot<TOKEN>/getMe"""
+    if not BOT_TOKEN:
+        return jsonify({"status": "error", "message": "Chưa cấu hình BOT_TOKEN trên Render Environment"}), 400
+    try:
+        url = f"{ZALO_BOT_API_BASE}/bot{BOT_TOKEN}/getMe"
+        r = requests.get(url, timeout=10)
+        return jsonify(r.json() if r.headers.get("content-type") == "application/json" else {"raw": r.text})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/set_webhook", methods=["GET"])
+def setup_webhook():
+    """Kích hoạt kết nối Webhook theo chuẩn bot.zapps.me: POST /bot<TOKEN>/setWebhook"""
+    if not BOT_TOKEN:
+        return jsonify({"status": "error", "message": "Chưa cấu hình BOT_TOKEN trên Render Environment!"}), 400
+    
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://bot-ai-zalo.onrender.com")
+    webhook_url = f"{render_url}/webhook"
+    zalo_url = f"{ZALO_BOT_API_BASE}/bot{BOT_TOKEN}/setWebhook"
+    
+    try:
+        payload = {"url": webhook_url}
+        r = requests.post(zalo_url, json=payload, timeout=15)
+        res_data = r.json() if r.headers.get("content-type") == "application/json" else r.text
+        return jsonify({
+            "status": "ok",
+            "message": "Đã thiết lập Webhook Zalo Bot thành công!",
+            "webhook_url": webhook_url,
+            "zalo_response": res_data
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.get_json(force=True)
+    """Nhận Update từ Zalo theo chuẩn tài liệu https://bot.zapps.me/docs/"""
+    data = request.get_json(force=True) or {}
+    chat_id = None
+    text = None
+    sender_name = ""
+
+    # Parse chuẩn Zalo Bot Update object
+    if "message" in data:
+        m = data["message"]
+        text = m.get("text")
+        chat = m.get("chat") or {}
+        sender_from = m.get("from") or {}
+        chat_id = chat.get("id") or sender_from.get("id")
+        sender_name = sender_from.get("display_name") or sender_from.get("first_name") or sender_from.get("username") or ""
+
+    if chat_id and text:
+        incoming_queue.append({
+            "id": f"{chat_id}_{int(time.time()*1000)}",
+            "chat_id": str(chat_id),
+            "text": str(text).strip(),
+            "sender_name": sender_name,
+            "timestamp": time.time()
+        })
+        if len(incoming_queue) > MAX_QUEUE:
+            incoming_queue.pop(0)
+
+    return jsonify({"ok": True}), 200
+
+@app.route("/api/get_incoming", methods=["GET"])
+def get_incoming():
+    """Phần mềm Agris trên máy tính định kỳ gọi API này để lấy tin nhắn về cho Bot Leader"""
+    global incoming_queue
+    msgs = list(incoming_queue)
+    incoming_queue.clear()
+    return jsonify({"status": "ok", "messages": msgs})
+
+@app.route("/api/send_reply", methods=["POST"])
+def send_reply():
+    """Bot Leader Agris xử lý xong -> Gửi lên đây để chuyển cho Zalo qua /sendMessage"""
+    payload = request.get_json(force=True) or {}
+    chat_id = payload.get("chat_id")
+    text = payload.get("text")
+
+    if not chat_id or not text:
+        return jsonify({"status": "error", "message": "Thiếu chat_id hoặc text"}), 400
+
+    if not BOT_TOKEN:
+        return jsonify({"status": "error", "message": "Chưa có BOT_TOKEN trên Render"}), 500
+
+    # Gửi qua Zalo Bot API chuẩn bot-api.zapps.me
+    url = f"{ZALO_BOT_API_BASE}/bot{BOT_TOKEN}/sendMessage"
     try:
-        sender_id = None
-        text = None
-
-        if isinstance(data, dict):
-            sender = data.get("sender") or {}
-            msg = data.get("message") or {}
-            sender_id = sender.get("id") or data.get("sender_id")
-            text = msg.get("text") or data.get("message_text") or (data.get("message") and data["message"].get("text"))
-
-        if not sender_id:
-            try:
-                sender_id = data["events"][0]["source"]["userId"]
-                text = data["events"][0]["message"]["text"]
-            except Exception:
-                pass
-
-        if not sender_id or not text:
-            return jsonify({"ok": True})
-
-        # Tạo phản hồi AI từ Google Gemini
-        answer = generate_ai_response(text)
-
-        # Gửi phản hồi lại qua Zalo OA
-        headers = {"access_token": ZALO_ACCESS_TOKEN}
-        payload = {
-            "recipient": {"user_id": sender_id},
-            "message": {"text": answer}
-        }
-        r = requests.post(ZALO_SEND_URL, headers=headers, json=payload, timeout=10)
-        return jsonify({"ok": True, "answer": answer}), 200
-
+        r = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=12)
+        res_data = r.json() if r.headers.get("content-type") == "application/json" else r.text
+        return jsonify({"status": "ok", "zalo_response": res_data})
     except Exception as e:
-        print("Webhook handling error:", e)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
