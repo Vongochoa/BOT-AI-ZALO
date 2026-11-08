@@ -65,7 +65,11 @@ def setup_webhook():
     zalo_url = f"{ZALO_BOT_API_BASE}/bot{BOT_TOKEN}/setWebhook"
     
     try:
-        payload = {"url": webhook_url}
+        secret_token = request.args.get("secret_token") or "agris_zalo_secret_2026"
+        payload = {
+            "url": webhook_url,
+            "secret_token": secret_token
+        }
         r = requests.post(zalo_url, json=payload, timeout=15)
         res_data = r.json() if r.headers.get("content-type") == "application/json" else r.text
         return jsonify({
